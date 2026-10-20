@@ -4,9 +4,9 @@ name: macOS runtime
 
 on:
   push:
-    paths: ['runtime/**', 'fighter_sdk/**', 'tests/plat_selftest.c', 'tools/lifter/**', 'scripts/macos/**', 'scripts/setup.py', 'scripts/run.py', 'BUILDING_MAC.md', 'play_mac.sh', '.github/workflows/macos-runtime.yml']
+    paths: ['runtime/**', 'fighter_sdk/**', 'tests/plat_selftest.c', 'tests/fan_selftest.c', 'tools/lifter/**', 'scripts/macos/**', 'scripts/setup.py', 'scripts/run.py', 'BUILDING_MAC.md', 'play_mac.sh', '.github/workflows/macos-runtime.yml']
   pull_request:
-    paths: ['runtime/**', 'fighter_sdk/**', 'tests/plat_selftest.c', 'tools/lifter/**', 'scripts/macos/**', 'scripts/setup.py', 'scripts/run.py', 'BUILDING_MAC.md', 'play_mac.sh', '.github/workflows/macos-runtime.yml']
+    paths: ['runtime/**', 'fighter_sdk/**', 'tests/plat_selftest.c', 'tests/fan_selftest.c', 'tools/lifter/**', 'scripts/macos/**', 'scripts/setup.py', 'scripts/run.py', 'BUILDING_MAC.md', 'play_mac.sh', '.github/workflows/macos-runtime.yml']
   workflow_dispatch:
 
 jobs:
@@ -113,6 +113,8 @@ jobs:
           clang -O1 -w -mmacosx-version-min=14.4 -include plat/plat_pre.h -I plat $(pkg-config --cflags sdl3 openssl) \
             ../tests/plat_selftest.c plat_posix.c -o plat_selftest $(pkg-config --libs sdl3 openssl)
           ./plat_selftest
+      - name: Triangle fans as triangle lists (runtime/nvn_vk_fan.h, MAC4)
+        run: clang -O1 -Wall -I runtime tests/fan_selftest.c -o fan_selftest && ./fan_selftest
 
   # What MoltenVK (Homebrew) offers on the runner's GPU: API version, portability subset, the extensions nvn_vk.c asks for.
   vulkan-info:

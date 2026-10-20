@@ -39,6 +39,9 @@ Controllers: any pad SDL3 knows. Remapping: `build-macos/config/controllers.ini`
 
 - Graphics use Vulkan through MoltenVK. Parts of Vulkan that the game asks for may be missing on Metal. The game may stop
   at start with a message starting with `nvn_vk:` that names the missing part. That message is useful: send it.
+- Metal cannot draw triangle fans. When MoltenVK says so (the log line `nvn_vk: triangle fans drawn as triangle lists`),
+  fans are turned into triangle lists on the CPU. This was checked by a self-test (`tests/fan_selftest.c`), not yet in
+  the game on a Mac. If shapes look broken, try `SSBU_VK_FANS=native ./play_mac.sh` and report whether that changes them.
 - Speed is unknown. It may be slow, or stutter while shaders are prepared.
 - **Mods and the hook table are off** on macOS.
 - The **settings menu (F1) is not available**.
@@ -49,7 +52,10 @@ Controllers: any pad SDL3 knows. Remapping: `build-macos/config/controllers.ini`
 
 - **The install stopped:** run the same command again. Finished steps are skipped and it continues where it stopped.
 - **Out of memory / the Mac freezes during the build:** run again with a lower `--jobs`, for example `--jobs 2`.
-- **The game crashes at start in MoltenVK:** try `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 ./play_mac.sh`.
+- **The game crashes at start in MoltenVK** (before any line starting with `nvn_vk:`): try
+  `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 ./play_mac.sh`, and say in your report that you did. This setting lowers what
+  a shader may use (Metal then allows 16 textures and 31 buffers in a stage). If the game then stops with
+  `nvn_vk: a ... pipeline needs ... the device allows ...`, the setting is the cause: send that line and play without it.
 - **Collect the logs:** run `scripts/macos/collect_logs_mac.sh`. It makes `~/Desktop/ssbu_mac_report_<date>.zip` with the
   build logs, the last game logs and facts about your Mac (macOS version, chip, graphics, Vulkan, Homebrew packages). It
   never includes your dump or any game file. **Send that zip** with your report.

@@ -443,7 +443,7 @@ static PairLib *pairlib_ensure(VStage *vs, VStage *fs, int samples, int sshade, 
     *how = 1;
     VkDescriptorSetLayoutBinding b0[80], b1[140];
     layout_bindings(vs, 0, b0, &l->nb[0], b1, &l->nb[1]);
-    if (fs) layout_bindings(fs, 1, b0, &l->nb[0], b1, &l->nb[1]);
+    if (fs) layout_bindings(fs, 1, b0, &l->nb[0], b1, &l->nb[1]); NVK_LIMITS(vs, fs)
     for (int i = 0; i < 2; i++) {
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.bindingCount = (uint32_t)l->nb[i]; li.pBindings = i ? b1 : b0;
@@ -741,7 +741,7 @@ static double pipe_build(Pipe *p) {
     }
     VkDescriptorSetLayoutBinding b0[80], b1[140];
     layout_bindings(vs, 0, b0, &p->nb[0], b1, &p->nb[1]);
-    if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]);
+    if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]); NVK_LIMITS(vs, fs)
     for (int i = 0; i < 2; i++) {
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.bindingCount = (uint32_t)p->nb[i]; li.pBindings = i ? b1 : b0;

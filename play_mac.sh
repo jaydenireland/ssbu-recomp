@@ -7,6 +7,7 @@
 #
 # The game's log is written to build-macos/logs/game_<time>.log (the last 10 are kept): attach the newest one to a report,
 # or run scripts/macos/collect_logs_mac.sh. If MoltenVK crashes at start, try:  MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 ./play_mac.sh
+# (it lowers Metal's per-stage limits: a stop at 'nvn_vk: a ... pipeline needs ...' then means play without it; BUILDING_MAC.md)
 # (any MVK_* variable you export is passed on to the game).
 set -uo pipefail
 

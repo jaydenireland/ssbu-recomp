@@ -98,7 +98,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     EXT(has_fault, "VK_EXT_device_fault", fault, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT)
 #ifdef VK_KHR_portability_subset
     /* macOS (MoltenVK): a device that lists VK_KHR_portability_subset must have it enabled; its features (all the
-     * supported ones enabled, as for the others) say what Metal cannot do. MAC4: the drawing code respects them. */
+     * supported ones enabled, as for the others) say what Metal cannot do. MAC4: triangleFans is respected (fan_draw); the others are only printed below. */
     EXT(has_port, "VK_KHR_portability_subset", port, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR)
 #endif
 #undef EXT
@@ -994,9 +994,14 @@ typedef struct {
 } NvkVi;
 static void nvk_vi_pipe(const void *key, VkDynamicState *dyn, VkGraphicsPipelineCreateInfo *gi, NvkVi *s);
 #define NVK_VI_PIPE(k, dyn, gi) NvkVi nvk_vi_; nvk_vi_pipe(k, dyn, gi, &nvk_vi_);
+/* MAC4: the descriptors a pipeline's layouts ask for, against the device's limits (nvk_limits; NVK_LIMITS on a line of
+ * nvn_vk_m4.c it already had). Metal without argument buffers allows 16 samplers and 31 buffers in a stage. */
+static void nvk_limits(const void *vs, const void *fs);
+#define NVK_LIMITS(vs, fs) nvk_limits(vs, fs);
 #else
 #define PKEY_VI
 #define NVK_VI_PIPE(k, dyn, gi)
+#define NVK_LIMITS(vs, fs)
 #endif
 #include "nvn_vk_m4.c"                             /* session 4: stages, pipelines, workers (M4) */
 #ifdef __APPLE__
@@ -1021,6 +1026,45 @@ static void nvk_vi_pipe(const void *key, VkDynamicState *dyn, VkGraphicsPipeline
     s->vi.vertexBindingDescriptionCount = k->vi_nb; s->vi.pVertexBindingDescriptions = s->b; s->vi.vertexAttributeDescriptionCount = k->vi_na; s->vi.pVertexAttributeDescriptions = s->a;
     if (nvdd) { s->di.vertexBindingDivisorCount = nvdd; s->di.pVertexBindingDivisors = s->dd; s->vi.pNext = &s->di; }
     gi->pVertexInputState = &s->vi;
+}
+/* sb / sm: storage buffers / combined image samplers of each of the n stages that share the two sets. Over a limit: the
+ * numbers and the limit are printed, and the game stops as at any missing part (nvn_vk_missing) instead of failing later
+ * in MoltenVK's shader conversion with nothing that names the cause. */
+static void nvk_limits_check(const char *kind, const uint32_t *sb, const uint32_t *sm, int n) {
+    const VkPhysicalDeviceLimits *L = &V.props.limits;
+    static LONG64 nrep;
+    uint32_t tsb = 0, tsm = 0;
+    const char *over = NULL;
+    uint32_t need = 0, have = 0;
+#define NVK_OVER(c, what, a, b) if (!over && (c)) { over = what; need = (a); have = (b); }
+    for (int s = 0; s < n; s++) {
+        NVK_OVER(sb[s] > L->maxPerStageDescriptorStorageBuffers, "storage buffers in one stage (maxPerStageDescriptorStorageBuffers)", sb[s], L->maxPerStageDescriptorStorageBuffers)
+        NVK_OVER(sm[s] > L->maxPerStageDescriptorSamplers, "samplers in one stage (maxPerStageDescriptorSamplers)", sm[s], L->maxPerStageDescriptorSamplers)
+        NVK_OVER(sm[s] > L->maxPerStageDescriptorSampledImages, "textures in one stage (maxPerStageDescriptorSampledImages)", sm[s], L->maxPerStageDescriptorSampledImages)
+        NVK_OVER(sb[s] + sm[s] > L->maxPerStageResources, "resources in one stage (maxPerStageResources)", sb[s] + sm[s], L->maxPerStageResources)
+        tsb += sb[s]; tsm += sm[s];
+    }
+    NVK_OVER(tsb > L->maxDescriptorSetStorageBuffers, "storage buffers in one set (maxDescriptorSetStorageBuffers)", tsb, L->maxDescriptorSetStorageBuffers)
+    NVK_OVER(tsm > L->maxDescriptorSetSamplers, "samplers in one set (maxDescriptorSetSamplers)", tsm, L->maxDescriptorSetSamplers)
+    NVK_OVER(tsm > L->maxDescriptorSetSampledImages, "textures in one set (maxDescriptorSetSampledImages)", tsm, L->maxDescriptorSetSampledImages)
+#undef NVK_OVER
+    if (!over) return;
+    if (InterlockedIncrement64(&nrep) <= 10) {
+        printf("nvn_vk: a %s pipeline needs %u %s, the device allows %u (storage buffers per stage %u %u, samplers per stage %u %u)%s\n", kind, need, over, have,
+               sb[0], n > 1 ? sb[1] : 0, sm[0], n > 1 ? sm[1] : 0,
+               getenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS") && !atoi(getenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS")) ? ": MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 is set, which lowers these limits: unset it" : "");
+        fflush(stdout);
+    }
+    nvn_vk_missing("a pipeline with more descriptors than the device allows (the line before this one names the limit)");
+}
+static void nvk_limits(const void *vs, const void *fs) {
+    const VStage *st[2] = {vs, fs};
+    uint32_t sb[2] = {0, 0}, sm[2] = {0, 0};
+    for (int s = 0; s < 2; s++) if (st[s]) {       /* as layout_bindings: constant buffers 1..17 and the storage buffers are storage buffers, every sampler a combined image sampler */
+        sb[s] = (uint32_t)__builtin_popcount(st[s]->cbufs & 0x3fffeu) + (uint32_t)__builtin_popcount(st[s]->ssbos & 0xffffu);
+        sm[s] = (uint32_t)st[s]->nsmp;
+    }
+    nvk_limits_check("graphics", sb, sm, 2);
 }
 #endif
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
@@ -2150,6 +2194,9 @@ static void compute_pipe_make(VStage *v) {         /* any thread */
         for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b0[n0++] = b; }
         if (v->ssbo_w) { VkDescriptorSetLayoutBinding b = {38, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b0[n0++] = b; }
         for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b1[n1++] = b; }
+#ifdef __APPLE__
+        { uint32_t sb = (uint32_t)n0, sm = (uint32_t)n1; nvk_limits_check("compute", &sb, &sm, 1); }      /* MAC4 */
+#endif
         for (int i = 0; i < 2; i++) {
             VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             li.bindingCount = (uint32_t)(i ? n1 : n0); li.pBindings = i ? b1 : b0;
@@ -2797,6 +2844,43 @@ static void dt_vk(int fight, int idx, int ok, const Cmd *m, int indexed, const B
            (unsigned long long)R.ds, R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.polyoff[0], R.polyoff[1], R.polyoff[2], R.viewport[0], R.viewport[1], R.viewport[2], R.viewport[3], R.have_viewport,
            R.scissor[0], R.scissor[1], R.scissor[2], R.scissor[3], R.have_scissor, R.drange[0], R.drange[1], R.depth_clamp, R.restart, R.rast_discard, R.pass_w, R.pass_h, R.ncol, R.depth.tex != NULL, R.chanmask, R.blend_on, R.gen);
 }
+#ifdef __APPLE__
+/* MAC4: a device without triangle fans (portability subset triangleFans 0) draws a fan as a list of 32-bit indices made on
+ * the CPU into the stream ring (nvn_vk_fan.h). SSBU_VK_FANS=list makes the lists on any device, =native never. */
+#include "nvn_vk_fan.h"
+static int fan_lists(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("SSBU_VK_FANS");
+        on = e && e[0] ? !strcmp(e, "list") : D.has_port && !D.port.triangleFans;
+        printf("nvn_vk: triangle fans %s (SSBU_VK_FANS %s)\n", on ? "drawn as triangle lists made on the CPU" : "drawn by the device", e && e[0] ? e : "not set");
+    }
+    return on;
+}
+/* OP_DRAW_ARRAYS (indexed 0) or OP_DRAW_ELEMENTS (indexed 1) of a fan, with the arguments the two cases of exec read */
+static void fan_draw(const Cmd *m, int indexed) {
+    const uint64_t *a = m->a;
+    unsigned t = indexed ? ((unsigned)a[1] < 3 ? (unsigned)a[1] : 1) : 2;
+    uint32_t count = (uint32_t)a[2], cap = fan_list_cap(count), inst = (uint32_t)(indexed ? a[6] : a[4]), first_inst = (uint32_t)(indexed ? a[5] : a[3]);
+    int32_t base = (int32_t)(indexed ? a[4] : a[1]);
+    if ((int)a[2] <= 0 || !cap || (indexed && !a[3])) { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), 0, m, 0, NULL); R.frame_skipped++; nvn_front_count(1, 1); return; }
+    BufRef ib;
+    ib.zero = 0; ib.buf = R.ring;
+    ib.off = ring_raw(NULL, (uint64_t)cap * 4);   /* before the indices are read and the draw is prepared: a ring wrap submits and lands buffers */
+    if (indexed) {                                 /* guest memory must hold what compute wrote into the indices (buf_ref binds such a buffer instead) */
+        uint64_t sz = (uint64_t)count << t;
+        if (g_cb_live && cb_overlap(a[3], sz)) cb_sync();
+        cb_kept_range(a[3], sz, 1);
+    }
+    uint32_t n = fan_to_list(indexed ? P(a[3]) : NULL, (int)t, count, indexed && R.restart, D.has_pv, (uint32_t *)((uint8_t *)R.ring_mem.map + ib.off));
+    ib.size = (uint64_t)n * 4;
+    { LONG64 t0 = tk(); int ok = n && draw_prepare(4); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, indexed, &ib); } if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); return; } }
+    vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, VK_INDEX_TYPE_UINT32);
+    if (D.has_ckpt) ckpt_mark(1, 6, n, inst, 0, base, 2);
+    vkCmdDrawIndexed(R.cmd, n, inst, 0, base, first_inst);
+    R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
+}
+#endif
 static void replay(uint64_t handle, int depth);
 static void exec(const Cmd *m, int depth) {
     const uint8_t *blob = BLOB(m);
@@ -2947,12 +3031,18 @@ static void exec(const Cmd *m, int depth) {
         break;
     }
     case OP_DRAW_ARRAYS:
+#ifdef __APPLE__
+        if (a[0] == 6 && fan_lists()) { fan_draw(m, 0); break; }
+#endif
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         if (D.has_ckpt) ckpt_mark(0, (unsigned)a[0], (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, 0);
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
     case OP_DRAW_ELEMENTS: {
+#ifdef __APPLE__
+        if (a[0] == 6 && fan_lists()) { fan_draw(m, 1); break; }
+#endif
         unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1;
         int count = (int)a[2];
         if (count <= 0 || !a[3]) { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), 0, m, 0, NULL); R.frame_skipped++; nvn_front_count(1, 1); break; }
